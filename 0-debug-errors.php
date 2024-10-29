@@ -25,8 +25,7 @@ defined( 'ABSPATH' ) || exit;
 
 
 /* Remove plugin updates */
-add_filter( 'site_transient_update_plugins', 'debug_errors_filter_plugin_updates' );
-function debug_errors_filter_plugin_updates($value)
+add_filter('site_transient_update_plugins', function ($value)
 {
 	$name = plugin_basename(__FILE__);
 	if (isset($value->response[$name]))
@@ -34,7 +33,8 @@ function debug_errors_filter_plugin_updates($value)
 		unset($value->response[$name]);
 	}
 	return $value;
-}
+});
+
 
 /* Выключаем html отладчик */
 add_filter('qm/dispatchers', function($dispatchers, $qm){
@@ -52,15 +52,75 @@ if (!defined('WP_DISABLE_FATAL_ERROR_HANDLER'))
 	define('WP_DISABLE_FATAL_ERROR_HANDLER', true);
 }
 
+
+/**
+ * Show stack trace
+ */
+function elberos_show_stack_trace($e)
+{
+	$trace = $e->getTrace();
+	echo "<br/>\n";
+	foreach ($trace as $index => $item)
+	{
+		if (isset($item['file']))
+		{
+			echo $index . ") " . htmlspecialchars($item['file']) .
+				"(" . htmlspecialchars($item['line']) . ")";
+			echo ": " . htmlspecialchars($item['function']);
+		}
+		else if (isset($item['class']))
+		{
+			echo $index . ") " . htmlspecialchars($item['class']);
+			echo ": " . htmlspecialchars($item['function']);
+		}
+		else
+		{
+			echo "internal: " . htmlspecialchars($item['function']);
+		}
+		
+		echo "<br/>\n";
+	}
+}
+
+
+/**
+ * Show error
+ */
+function elberos_show_error($e)
+{
+	if (!$e) return;
+	
+	status_header(500);
+	http_response_code(500);
+	
+	echo "<b>Fatal Error</b><br/>";
+	if ($e instanceof \Exception)
+	{
+		$e = $e->getPrevious() ? $e->getPrevious() : $e;
+		
+		echo nl2br(htmlspecialchars($e->getMessage())) . "<br/>\n";
+		echo "in file " . htmlspecialchars($e->getFile()) . ":" .
+			htmlspecialchars($e->getLine()) . "\n";
+		
+		/* Show stack trace */
+		elberos_show_stack_trace($e);
+	}
+	else
+	{
+		echo nl2br(htmlspecialchars($e['message'])) . "<br/>\n";
+		if (isset($e["file"]))
+		{
+			echo "in file " . htmlspecialchars($e["file"]) . ":" .
+				(isset($e["line"]) ? htmlspecialchars($e["line"]) : 0) . "\n";
+		}
+	}
+}
+
 /* Обработчик ошибок */
 set_exception_handler( function ($e){
-	if ($e)
-	{
-		status_header(500);
-		echo "<b>Fatal Error</b>: ";
-		echo nl2br($e->getMessage()) . " ";
-		echo "in file " . $e->getFile() . ":" . $e->getLine();
-	}	
+	if (!$e) return;
+	elberos_show_error($e);
+	exit();
 } );
 
 /* Shutdown функция */
@@ -68,45 +128,8 @@ register_shutdown_function( function(){
 	
 	$e = error_get_last();
 	
-	if (
-		empty( $e ) ||
-		!( $e['type'] & (E_ERROR | E_CORE_ERROR | E_PARSE | E_COMPILE_ERROR | E_USER_ERROR | E_RECOVERABLE_ERROR) )
-	)
-	{
-		return;
-	}
+	if (!$e) return;
+	if (!($e['type'] & (E_COMPILE_ERROR))) return;
 	
-	echo "<b>Fatal Error</b><br/>";
-	echo nl2br($e['message']) . "\n";
+	elberos_show_error($e);
 } );
-
-add_filter( 'pre_update_option_active_plugins', 'debug_errors_pre_update_option_active_plugins', 999999);
-function debug_errors_pre_update_option_active_plugins($plugins)
-{
-	
-	if ( empty( $plugins ) ) {
-		return $plugins;
-	}
-	
-	$name = plugin_basename(__FILE__);
-	if (($key = array_search($name, $plugins)) !== false)
-	{
-		unset($plugins[$key]);
-	}
-	array_unshift($plugins, $name);
-	
-	return $plugins;
-	
-}
-
-add_action
-(
-	'plugins_loaded',
-	function ()
-	{
-		if (!defined('QM_ERROR_FATALS'))
-		{
-			define( 'QM_ERROR_FATALS', E_ERROR | E_PARSE | E_COMPILE_ERROR | E_USER_ERROR | E_RECOVERABLE_ERROR );
-		}
-	}
-);
